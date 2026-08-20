@@ -4,7 +4,7 @@ NetSage AI - deterministic rule checker.
 This module is the "safety net" that runs BEFORE and independently of the
 AI diagnoser. It never guesses: every finding here is derived from a
 straightforward parse of show-command text, and the AI diagnoser is told
-to treat these findings as authoritative (see backend/ai_diagnoser.py).
+to treat these findings as authoritative (see src/engine.py).
 
 Checks implemented (per the project spec, "Build the rule checker" step):
   1. Interface administratively down

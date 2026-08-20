@@ -17,82 +17,76 @@ human reviewer always has the final say — nothing is auto-applied.
 
 ```
 netsage-ai/
-├── backend/
-│   ├── main.py              FastAPI app — POST /diagnose
-│   ├── rule_checker.py      Deterministic checks (no AI, no guessing)
-│   ├── ai_diagnoser.py      Calls a local Ollama model for the writeup
-│   ├── requirements.txt
-│   └── test_case00{1,2,3}.py  Example end-to-end runs
-├── frontend/                 Vite + React UI
-├── cisco/
-│   └── netsage_topology.pkt  Packet Tracer lab topology
+├── src/
+│   ├── checker.py           Deterministic checks (no AI, no guessing)
+│   ├── engine.py            Calls a local Ollama model for the write-up
+│   └── app.py               Streamlit operations dashboard
+├── data/
+│   └── cases.csv            32 troubleshooting cases (deliverable)
+├── docs/
+│   └── model_audit_log.md   Write-up of every corrected case (deliverable)
 ├── prompts/
-│   └── diagnose_prompt.md    Prompt library / template
+│   └── diagnose_prompt.md   Prompt library / template
+├── cisco/
+│   └── netsage_topology.pkt Packet Tracer lab topology
 ├── scripts/
-│   ├── generate_cases.py       Builds cases.csv
+│   ├── generate_cases.py       Builds data/cases.csv
 │   ├── generate_review_log.py  Builds review_log.csv
 │   └── build_dashboard.py      Builds dashboard.xlsx
-├── cases.csv                 32 troubleshooting cases (deliverable)
-├── review_log.csv            AI output + human decision per case
-├── dashboard.xlsx            Summary counts + chart (deliverable)
-└── responsible_ai_log.md     Write-up of every corrected case (deliverable)
+├── system_config.json       Thresholds, model, and execution parameters
+├── requirements.txt
+├── review_log.csv           AI output + human decision per case
+└── dashboard.xlsx           Summary counts + chart (deliverable)
 ```
 
 ## What's built
 
 | Requirement | Where |
 |---|---|
-| Case dataset (30+ cases) | `cases.csv` — 32 cases across VLAN, Gateway, DHCP, DNS, Routing, ACL, NAT, Wireless |
+| Case dataset (30+ cases) | `data/cases.csv` — 32 cases across VLAN, Gateway, DHCP, DNS, Routing, ACL, NAT, Wireless |
 | Evidence per case | Each row: symptom, topology, show output(s), expected fault, OSI layer, concept tag, severity |
-| AI prompt library | `prompts/diagnose_prompt.md`, embedded in `backend/ai_diagnoser.py` |
-| Rule checker | `backend/rule_checker.py` — interface down, protocol down, missing route, duplicate IP, wrong mask, gateway mismatch, missing/wrong VLAN |
+| AI prompt library | `prompts/diagnose_prompt.md`, embedded in `src/engine.py` |
+| Rule checker | `src/checker.py` — interface down, protocol down, missing route, duplicate IP, wrong mask, gateway mismatch, missing/wrong VLAN |
+| Streamlit dashboard | `src/app.py` — Diagnose view, Dashboard view, Audit Log view |
+| System config | `system_config.json` — model, temperature, confidence threshold, all file paths |
 | Dashboard | `dashboard.xlsx` — issue-type counts, severity breakdown, AI-vs-human agreement rate + chart |
-| Responsible AI log | `responsible_ai_log.md` — 8 corrected cases (5+ required), each with what the AI said, what was actually true, and why |
+| Responsible AI log | `docs/model_audit_log.md` — 8 corrected cases (5+ required), each with what the AI said, what was actually true, and why |
 
 ## Running it
 
-### 1. Rule checker (no dependencies beyond Python 3)
+### 1. Install dependencies
 
 ```bash
-cd backend
-python rule_checker.py
+pip install -r requirements.txt
 ```
 
-### 2. Full backend (AI diagnosis requires a local Ollama model)
+### 2. Rule checker only (no LLM required)
 
 ```bash
-pip install -r backend/requirements.txt
-ollama pull qwen2.5:1.5b     # one-time, requires Ollama installed locally
-uvicorn backend.main:app --reload
+python src/checker.py
 ```
 
-Then `POST /diagnose` with a case body (see `backend/test_case001.py` for
-the expected shape).
-
-> Note: this sandbox environment has no local LLM runtime and no network
-> access to Ollama, so the AI diagnoser can't be executed here. The
-> `review_log.csv` and `responsible_ai_log.md` deliverables were produced
-> by manually working through each of the 32 cases using the exact logic
-> `ai_diagnoser.py` sends to the model (same prompt, same rule-checker
-> input) and recording the output in the same format the endpoint
-> returns — so the human-review workflow is demonstrated end-to-end even
-> without a live model call. Once Ollama is running locally, `/diagnose`
-> will produce live equivalents of these rows case by case.
-
-### 3. Regenerate the dataset / dashboard
+### 3. Full Streamlit dashboard
 
 ```bash
-python scripts/generate_cases.py       # -> cases.csv
+# Pull the Ollama model first (one-time, requires Ollama installed)
+ollama pull qwen2.5:1.5b
+
+# Launch the app
+streamlit run src/app.py
+```
+
+Open <http://localhost:8501> in your browser.
+
+> If Ollama is not running, the rule checker panel works fully — only the
+> AI Diagnosis step will show a connection error.
+
+### 4. Regenerate the dataset / dashboard
+
+```bash
+python scripts/generate_cases.py       # -> data/cases.csv
 python scripts/generate_review_log.py  # -> review_log.csv
 python scripts/build_dashboard.py      # -> dashboard.xlsx
-```
-
-### 4. Frontend
-
-```bash
-cd frontend
-npm install
-npm run dev
 ```
 
 ## Dashboard snapshot
@@ -105,8 +99,7 @@ npm run dev
 
 - **Demo video** (5–10 min): record one broken case going through rule
   checker → AI diagnosis → human review → fix → verification, using the
-  frontend and a live Ollama call.
-- **Live AI runs:** once Ollama is available in your environment, re-run
-  `test_case001.py`–`test_case003.py` (and ideally all 32 cases) against
+  Streamlit dashboard and a live Ollama call.
+- **Live AI runs:** once Ollama is available, re-run all 32 cases against
   the real model and compare to `review_log.csv` to sanity-check the
-  simulated outputs above.
+  simulated outputs.

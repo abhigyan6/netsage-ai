@@ -1,0 +1,10 @@
+{
+  "model": "qwen2.5:1.5b",
+  "temperature": 0,
+  "confidence_threshold": 0.5,
+  "max_findings": 5,
+  "data_path": "data/cases.csv",
+  "review_log_path": "review_log.csv",
+  "audit_log_path": "docs/model_audit_log.md",
+  "prompt_path": "prompts/diagnose_prompt.md"
+}
