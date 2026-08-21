@@ -1,4 +1,5 @@
 streamlit
-ollama
+google-genai
+pydantic
 pandas
 openpyxl

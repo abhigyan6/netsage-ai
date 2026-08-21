@@ -1,5 +1,5 @@
 {
-  "model": "qwen2.5:1.5b",
+  "model": "gemini-2.0-flash",
   "temperature": 0,
   "confidence_threshold": 0.5,
   "max_findings": 5,

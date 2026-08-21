@@ -1,19 +1,15 @@
 """
 NetSage AI - AI diagnoser engine.
 
-Calls a local Ollama model (configured in system_config.json) to produce a
+Calls Google Gemini API (configured in system_config.json) to produce a
 structured JSON explanation of the deterministic rule-checker finding.
-
-The prompt template is loaded from prompts/diagnose_prompt.md so it can be
-iterated on independently of this code.
 """
 
 import json
-import re
 import os
-
-import ollama
-
+from pydantic import BaseModel, Field
+from google import genai
+from google.genai import types
 
 # --------------------------------------------------------------------
 # Config
@@ -26,11 +22,9 @@ def _load_config():
     with open(config_path) as f:
         return json.load(f)
 
-
 CONFIG = _load_config()
-MODEL = CONFIG.get("model", "qwen2.5:1.5b")
+MODEL = CONFIG.get("model", "gemini-2.0-flash")
 TEMPERATURE = CONFIG.get("temperature", 0)
-
 
 def _load_prompt_template():
     """Load the prompt template from prompts/diagnose_prompt.md."""
@@ -40,35 +34,27 @@ def _load_prompt_template():
     with open(prompt_path, encoding="utf-8") as f:
         return f.read()
 
-
 PROMPT_TEMPLATE = _load_prompt_template()
 
-
 # --------------------------------------------------------------------
-# Helpers
+# Pydantic Schema for Gemini Structured Output
 # --------------------------------------------------------------------
 
-def clean_json(text):
-    """Remove markdown code fences if the model adds them."""
-    text = text.strip()
-    text = re.sub(r"^```json\s*", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"^```\s*", "", text)
-    text = re.sub(r"\s*```$", "", text)
-    return text.strip()
-
+class DiagnosisResult(BaseModel):
+    root_cause: str = Field(description="A clear, specific description of the most likely network fault")
+    confidence: float = Field(description="Between 0.0 and 1.0 — how certain the diagnosis is")
+    evidence: list[str] = Field(description="Specific facts quoted from the supplied show-command output")
+    next_command: str = Field(description="The single most useful Cisco command for further verification")
+    fix_steps: list[str] = Field(description="Safe IOS configuration commands to remediate the issue")
 
 # --------------------------------------------------------------------
 # Main diagnoser
 # --------------------------------------------------------------------
 
-def diagnose_case(case):
+def diagnose_case(case, api_key):
     """
-    Build a prompt from the case dict + rule-checker result, call Ollama,
+    Build a prompt from the case dict + rule-checker result, call Gemini API,
     and return the parsed JSON diagnosis dict (or None on failure).
-
-    The prompt is constructed by prepending the full prompt template
-    (with worked examples and rules) to the case-specific data, giving
-    the model all the context and format guidance it needs.
     """
     rule = case.get("rule_checker_result", {})
 
@@ -130,25 +116,24 @@ If RULE TYPE is NO_PROBLEM:
   next_command must be: "show ip interface brief"
   fix_steps must be empty.
   confidence must be low (0.3 or below).
-
-Return ONLY valid JSON. No explanatory text before or after the JSON object.
 """
 
-    # Combine: template (with worked examples) + case-specific data
     full_prompt = PROMPT_TEMPLATE + "\n" + case_section
 
     try:
-        response = ollama.chat(
+        client = genai.Client(api_key=api_key)
+        response = client.models.generate_content(
             model=MODEL,
-            messages=[{"role": "user", "content": full_prompt}],
-            options={"temperature": TEMPERATURE},
+            contents=full_prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=DiagnosisResult,
+                temperature=TEMPERATURE,
+            ),
         )
-
-        result = response["message"]["content"]
-        result = clean_json(result)
-        diagnosis = json.loads(result)
+        # The response.text is guaranteed to be JSON matching DiagnosisResult
+        diagnosis = json.loads(response.text)
         return diagnosis
-
     except Exception as e:
         print("AI diagnosis error:", e)
         return None

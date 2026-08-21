@@ -4,7 +4,7 @@ NetSage AI — Streamlit Operations Dashboard
 Run with:
     streamlit run src/app.py
 
-Requires Ollama running locally with qwen2.5:1.5b pulled for AI diagnosis.
+Requires a Gemini API Key to run the AI diagnoser.
 The rule checker (src/checker.py) works without any LLM.
 """
 
@@ -230,6 +230,10 @@ else:
 st.sidebar.divider()
 st.sidebar.caption(f"Model: `{CONFIG.get('model')}`  |  Conf threshold: `{CONFIG.get('confidence_threshold')}`")
 
+st.sidebar.divider()
+api_key = st.sidebar.text_input("Gemini API Key", type="password")
+st.sidebar.markdown("[Get a free key here](https://aistudio.google.com/app/apikey)", unsafe_allow_html=True)
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # VIEW: DIAGNOSE
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -295,7 +299,7 @@ Vlan1                  unassigned      YES unset  administratively down down""")
             client_gw   = st.text_input("Client gateway",      value=prefill.get("client_gateway", ""))
 
         run_rule   = st.form_submit_button("▶ Run Rule Checker", type="primary")
-        run_ai     = st.form_submit_button("🤖 Run AI Diagnosis (requires Ollama)")
+        run_ai     = st.form_submit_button("🤖 Run AI Diagnosis (requires API Key)")
 
     # ── rule checker ──────────────────────────────────────────────────────────
     if run_rule or run_ai:
@@ -341,17 +345,20 @@ Vlan1                  unassigned      YES unset  administratively down down""")
 
     # ── AI diagnoser ──────────────────────────────────────────────────────────
     if run_ai and "rule_result" in st.session_state:
-        case_payload = {
-            "case_id":               st.session_state["current_case_id"],
-            "symptom":               symptom,
-            "topology":              topology,
-            "show_ip_interface_brief": show_brief,
-            "show_ip_route":         show_route,
-            "rule_checker_result":   st.session_state["rule_result"],
-        }
-        with st.spinner("Calling Ollama model…"):
-            ai_result = diagnose_case(case_payload)
-        st.session_state["ai_result"] = ai_result
+        if not api_key:
+            st.error("Please enter a Gemini API Key in the sidebar.")
+        else:
+            case_payload = {
+                "case_id":               st.session_state["current_case_id"],
+                "symptom":               symptom,
+                "topology":              topology,
+                "show_ip_interface_brief": show_brief,
+                "show_ip_route":         show_route,
+                "rule_checker_result":   st.session_state["rule_result"],
+            }
+            with st.spinner("Calling Gemini API…"):
+                ai_result = diagnose_case(case_payload, api_key)
+            st.session_state["ai_result"] = ai_result
 
     if st.session_state.get("ai_result") is not None:
         ai_result = st.session_state["ai_result"]
@@ -428,9 +435,9 @@ Vlan1                  unassigned      YES unset  administratively down down""")
     elif run_ai and "rule_result" not in st.session_state:
         st.error("Run the rule checker first before requesting an AI diagnosis.")
 
-    elif run_ai and st.session_state.get("ai_result") is None and "rule_result" in st.session_state:
-        # ai_result was attempted but returned None (Ollama not running)
-        st.error("AI diagnosis failed. Make sure Ollama is running: `ollama serve`")
+    elif run_ai and st.session_state.get("ai_result") is None and "rule_result" in st.session_state and api_key:
+        # ai_result was attempted but returned None
+        st.error("AI diagnosis failed. Please check your API key and network connection.")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
