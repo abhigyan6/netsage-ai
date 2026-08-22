@@ -1,4 +1,4 @@
-# NetSage AI
+# NetSage AI https://netsage-ai-app.streamlit.app/
 
 **An AI troubleshooting helper for Cisco-style lab networks — with mandatory human review.**
 
