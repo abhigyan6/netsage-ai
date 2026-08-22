@@ -103,3 +103,4 @@ python scripts/build_dashboard.py      # -> dashboard.xlsx
 - **Live AI runs:** once Ollama is available, re-run all 32 cases against
   the real model and compare to `review_log.csv` to sanity-check the
   simulated outputs.
+
