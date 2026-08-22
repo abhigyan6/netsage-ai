@@ -4,8 +4,12 @@ NetSage AI — Streamlit Operations Dashboard
 Run with:
     streamlit run src/app.py
 
-Requires a Gemini API Key to run the AI diagnoser.
-The rule checker (src/checker.py) works without any LLM.
+API key is read from:
+  1. st.secrets["GEMINI_API_KEY"]  (Streamlit Cloud / secrets.toml)
+  2. GEMINI_API_KEY environment variable
+  3. Sidebar text input (fallback for local dev)
+
+The rule checker and fallback diagnostician work with no API key at all.
 """
 
 import csv
@@ -15,9 +19,10 @@ import sys
 from datetime import datetime, timezone
 
 import pandas as pd
+import plotly.express as px
 import streamlit as st
 
-# ── resolve project root so imports work regardless of cwd ───────────────────
+# ── resolve project root ──────────────────────────────────────────────────────
 ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
@@ -25,174 +30,116 @@ if ROOT not in sys.path:
 from src.checker import check_rules
 from src.engine import diagnose_case
 
-# ── page config ──────────────────────────────────────────────────────────────
+# ── page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="NetSage AI",
-    page_icon="🔬",
+    page_title="NetSage AI - Network Troubleshooter",
+    page_icon="🌐",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
-def inject_custom_css():
-    st.markdown("""
-    <style>
-    /* Google Fonts */
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+# ── CSS — aligned with reference dark teal theme ──────────────────────────────
+st.markdown("""
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap');
 
-    /* Global Typography */
-    html, body, [class*="css"]  {
-        font-family: 'Inter', sans-serif;
-    }
-
-    /* Dark Mode Palette & Gradients */
     :root {
-        --primary-gradient: linear-gradient(135deg, #00C9FF 0%, #92FE9D 100%);
-        --bg-color: #0d1117;
-        --card-bg: rgba(22, 27, 34, 0.6);
-        --border-color: rgba(255, 255, 255, 0.1);
-        --text-color: #c9d1d9;
+        --ink: #e7f0ed; --muted: #82938e; --line: #223531;
+        --paper: #07110f; --panel: #0d1a17;
+        --teal: #71e1c1; --teal-dark: #103c35; --amber: #f5bd43;
     }
-
-    /* Base Styling */
-    .stApp {
-        background-color: var(--bg-color);
-        background-image: 
-            radial-gradient(at 0% 0%, rgba(0, 201, 255, 0.15) 0px, transparent 50%),
-            radial-gradient(at 100% 0%, rgba(146, 254, 157, 0.15) 0px, transparent 50%);
-        color: var(--text-color);
+    .stApp { background: var(--paper); color: var(--ink); }
+    [data-testid="stHeader"] { background: transparent; }
+    [data-testid="stSidebar"] { background: #0b1714; border-right: 1px solid var(--line); }
+    [data-testid="stSidebar"] * { color: #dceae5 !important; }
+    [data-testid="stSidebar"] hr { border-color: var(--line); }
+    h1, h2, h3, h4, p, label, .stMarkdown { font-family: 'DM Sans', sans-serif; }
+    h1 { letter-spacing: 0; font-weight: 700; color: var(--ink); }
+    h2, h3 { color: var(--ink); }
+    code, .stCode, [data-testid="stMetricValue"] { font-family: 'Space Mono', monospace; }
+    [data-testid="stMetric"] {
+        background: var(--panel); border: 1px solid var(--line);
+        border-radius: 2px; padding: 0.8rem 1rem;
     }
-
-    /* Glassmorphism Cards */
-    div.stForm, div[data-testid="stExpander"], div[data-testid="stMetric"] {
-        background: var(--card-bg) !important;
-        backdrop-filter: blur(12px) !important;
-        border: 1px solid var(--border-color) !important;
-        border-radius: 12px !important;
-        padding: 1.5rem !important;
-        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3) !important;
-        transition: transform 0.2s ease, box-shadow 0.2s ease;
+    [data-testid="stMetricLabel"] { color: var(--muted); }
+    .stButton > button[kind="primary"] { background: var(--teal); border-color: var(--teal); color: #09211b; }
+    .stButton > button[kind="primary"]:hover { background: var(--teal-dark); border-color: var(--teal-dark); }
+    .stTextInput input, .stTextArea textarea {
+        background: var(--panel) !important; border: 1px solid var(--line) !important;
+        color: var(--ink) !important; font-family: 'Space Mono', monospace;
     }
-    
-    div.stForm:hover, div[data-testid="stExpander"]:hover, div[data-testid="stMetric"]:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 12px 40px 0 rgba(0, 0, 0, 0.4) !important;
+    .fallback-badge {
+        display: inline-block; background: #2a2500; color: var(--amber);
+        border: 1px solid #5a4800; border-radius: 4px;
+        padding: 0.2rem 0.6rem; font: 700 0.72rem 'Space Mono', monospace;
+        margin-bottom: 0.5rem;
     }
-
-    /* Buttons with Gradients & Micro-animations */
-    button[kind="primary"] {
-        background: var(--primary-gradient) !important;
-        color: #000 !important;
-        border: none !important;
-        border-radius: 8px !important;
-        font-weight: 600 !important;
-        padding: 0.5rem 1.5rem !important;
-        transition: all 0.3s ease !important;
-    }
-    button[kind="primary"]:hover {
-        transform: scale(1.05) !important;
-        box-shadow: 0 0 15px rgba(0, 201, 255, 0.6) !important;
-    }
-    
-    button[kind="secondaryFormSubmit"] {
-        background: rgba(255, 255, 255, 0.05) !important;
-        border: 1px solid var(--border-color) !important;
-        border-radius: 8px !important;
-        transition: all 0.3s ease !important;
-    }
-    button[kind="secondaryFormSubmit"]:hover {
-        background: rgba(255, 255, 255, 0.1) !important;
-        transform: scale(1.02) !important;
-    }
-
-    /* Sidebar Styling */
-    section[data-testid="stSidebar"] {
-        background: rgba(13, 17, 23, 0.8) !important;
-        backdrop-filter: blur(20px) !important;
-        border-right: 1px solid var(--border-color) !important;
-    }
-
-    /* Text Inputs & Areas */
-    .stTextInput input, .stTextArea textarea, .stSelectbox > div > div {
-        background: rgba(255, 255, 255, 0.03) !important;
-        border: 1px solid rgba(255, 255, 255, 0.1) !important;
-        border-radius: 8px !important;
-        color: white !important;
-        transition: border-color 0.2s ease, box-shadow 0.2s ease;
-    }
-    .stTextInput input:focus, .stTextArea textarea:focus, .stSelectbox > div > div:focus {
-        border-color: rgba(0, 201, 255, 0.5) !important;
-        box-shadow: 0 0 0 2px rgba(0, 201, 255, 0.2) !important;
-    }
-
-    /* Fade-in Animation for Results */
-    @keyframes fadeIn {
-        from { opacity: 0; transform: translateY(10px); }
-        to { opacity: 1; transform: translateY(0); }
-    }
-    div[data-testid="stVerticalBlock"] > div {
-        animation: fadeIn 0.5s ease forwards;
-    }
-
-    /* Header styling */
-    h1, h2, h3 {
-        background: var(--primary-gradient);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        font-weight: 700;
-        letter-spacing: -0.5px;
-    }
-
-    /* Metric Values */
-    div[data-testid="stMetricValue"] {
-        color: white !important;
-        font-weight: 700;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-inject_custom_css()
+</style>
+""", unsafe_allow_html=True)
 
 
 # ── load system config ────────────────────────────────────────────────────────
 with open(os.path.join(ROOT, "system_config.json")) as f:
     CONFIG = json.load(f)
 
-DATA_PATH        = os.path.join(ROOT, CONFIG["data_path"])
-REVIEW_LOG_PATH  = os.path.join(ROOT, CONFIG["review_log_path"])
-AUDIT_LOG_PATH   = os.path.join(ROOT, CONFIG["audit_log_path"])
+DATA_PATH       = os.path.join(ROOT, CONFIG["data_path"])
+REVIEW_LOG_PATH = os.path.join(ROOT, "data", "review_log.csv")
+AUDIT_LOG_PATH  = os.path.join(ROOT, CONFIG["audit_log_path"])
+
+# ── resolve API key (secrets > env > sidebar) ─────────────────────────────────
+def get_api_key(sidebar_key: str = "") -> str:
+    try:
+        return st.secrets["GEMINI_API_KEY"]
+    except Exception:
+        pass
+    env = os.environ.get("GEMINI_API_KEY", "")
+    if env:
+        return env
+    return sidebar_key
+
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def load_cases():
-    """Return cases.csv as a list of row dicts, or [] if missing."""
     if not os.path.exists(DATA_PATH):
         return []
     with open(DATA_PATH, newline="", encoding="utf-8") as f:
         return list(csv.DictReader(f))
 
 
-def append_review(case_id, rule_result, ai_result, decision, notes):
-    """Append one row to review_log.csv."""
-    fieldnames = [
-        "timestamp", "case_id", "rule_type", "rule_severity",
-        "ai_root_cause", "ai_confidence", "decision", "reviewer_notes",
-    ]
+REVIEW_COLUMNS = [
+    "timestamp", "case_id", "symptom",
+    "ai_fault", "ai_layer", "ai_confidence",
+    "human_verdict", "corrected_fault", "reviewer_notes",
+]
+
+def load_reviews() -> pd.DataFrame:
+    if not os.path.exists(REVIEW_LOG_PATH) or os.path.getsize(REVIEW_LOG_PATH) == 0:
+        df = pd.DataFrame(columns=REVIEW_COLUMNS)
+        os.makedirs(os.path.dirname(REVIEW_LOG_PATH), exist_ok=True)
+        df.to_csv(REVIEW_LOG_PATH, index=False)
+        return df
+    try:
+        return pd.read_csv(REVIEW_LOG_PATH)
+    except Exception:
+        return pd.DataFrame(columns=REVIEW_COLUMNS)
+
+
+def append_review(case_id, symptom, ai_result, human_verdict, corrected_fault, reviewer_notes):
+    df = load_reviews()
     row = {
         "timestamp":       datetime.now(timezone.utc).isoformat(),
         "case_id":         case_id,
-        "rule_type":       rule_result.get("type", ""),
-        "rule_severity":   rule_result.get("severity", ""),
-        "ai_root_cause":   ai_result.get("root_cause", "") if ai_result else "N/A",
+        "symptom":         symptom,
+        "ai_fault":        ai_result.get("root_cause", "") if ai_result else "N/A",
+        "ai_layer":        ai_result.get("osi_layer", "") if ai_result else "N/A",
         "ai_confidence":   ai_result.get("confidence", "") if ai_result else "N/A",
-        "decision":        decision,
-        "reviewer_notes":  notes,
+        "human_verdict":   human_verdict,
+        "corrected_fault": corrected_fault,
+        "reviewer_notes":  reviewer_notes,
     }
-    write_header = not os.path.exists(REVIEW_LOG_PATH)
-    with open(REVIEW_LOG_PATH, "a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        if write_header:
-            writer.writeheader()
-        writer.writerow(row)
+    df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
+    df.to_csv(REVIEW_LOG_PATH, index=False)
 
 
 def severity_color(severity):
@@ -200,39 +147,58 @@ def severity_color(severity):
         (severity or "").upper(), "⚪"
     )
 
+def confidence_color(conf: str) -> str:
+    return {"High": "🟢", "Medium": "🟡", "Low": "🔴"}.get(conf, "⚪")
+
+def osi_label(layer: int) -> str:
+    labels = {1:"Physical",2:"Data Link",3:"Network",4:"Transport",
+               5:"Session",6:"Presentation",7:"Application"}
+    return f"L{layer} — {labels.get(layer, 'Unknown')}"
+
 
 # ── sidebar ───────────────────────────────────────────────────────────────────
 
-st.sidebar.image(
-    "https://img.icons8.com/fluency/96/cisco.png",
-    width=64,
-)
-st.sidebar.title("NetSage AI")
-st.sidebar.caption("Cisco Network Troubleshooting")
-st.sidebar.divider()
+with st.sidebar:
+    st.markdown("""
+    <div style="display:flex;align-items:center;gap:12px;padding:1rem 0 0.5rem;">
+        <div style="background:#71e1c1;color:#09211b;border-radius:10px;font-size:1.5rem;padding:0.45rem 0.65rem;">🌐</div>
+        <div>
+            <div style="font:700 1.1rem 'Space Mono',monospace;letter-spacing:0.06em;color:#e7f0ed;">NetSage AI</div>
+            <div style="color:#82938e;font:0.68rem 'Space Mono',monospace;">Network Troubleshooter</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    st.divider()
 
-cases = load_cases()
-case_ids = [c.get("case_id", "") for c in cases if c.get("case_id")]
+    cases = load_cases()
+    case_ids = [c.get("case_id", "") for c in cases if c.get("case_id")]
 
-view = st.sidebar.radio(
-    "View",
-    ["🔍 Diagnose", "📊 Dashboard", "📋 Audit Log"],
-    label_visibility="collapsed",
-)
+    view = st.radio(
+        "View",
+        ["🔍 Diagnose", "📊 Dashboard", "📋 Audit Log"],
+        label_visibility="collapsed",
+    )
 
-st.sidebar.divider()
-if case_ids:
-    selected_case_id = st.sidebar.selectbox("Load case from dataset", ["— manual entry —"] + case_ids)
-else:
-    selected_case_id = "— manual entry —"
-    st.sidebar.info("No cases.csv found at data/cases.csv")
+    st.divider()
+    if case_ids:
+        selected_case_id = st.selectbox("Load case from dataset", ["— manual entry —"] + case_ids)
+    else:
+        selected_case_id = "— manual entry —"
+        st.info("No cases.csv found at data/cases.csv")
 
-st.sidebar.divider()
-st.sidebar.caption(f"Model: `{CONFIG.get('model')}`  |  Conf threshold: `{CONFIG.get('confidence_threshold')}`")
+    st.divider()
+    st.caption(f"Model: `{CONFIG.get('model')}`")
 
-st.sidebar.divider()
-api_key = st.sidebar.text_input("Gemini API Key", type="password")
-st.sidebar.markdown("[Get a free key here](https://aistudio.google.com/app/apikey)", unsafe_allow_html=True)
+    # Only show API key input if not available via secrets/env
+    _has_secret = bool(get_api_key())
+    if _has_secret:
+        st.success("🔑 API key loaded", icon="✅")
+        sidebar_key = ""
+    else:
+        sidebar_key = st.text_input("Gemini API Key", type="password",
+                                    help="Or set GEMINI_API_KEY in .streamlit/secrets.toml")
+        st.markdown("[Get a free key →](https://aistudio.google.com/app/apikey)")
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # VIEW: DIAGNOSE
@@ -240,8 +206,8 @@ st.sidebar.markdown("[Get a free key here](https://aistudio.google.com/app/apike
 
 if "🔍 Diagnose" in view:
 
-    st.title("🔬 NetSage AI — Network Diagnosis")
-    st.caption("Enter a case manually or load one from the dataset. Run the rule checker first, then optionally the AI diagnoser.")
+    st.title("🌐 NetSage AI — Network Diagnosis")
+    st.caption("Enter a case manually or load one from the dataset. The rule checker runs without an API key. AI diagnosis is optional.")
 
     # ── pre-fill from dataset ─────────────────────────────────────────────────
     prefill = {}
@@ -251,7 +217,7 @@ if "🔍 Diagnose" in view:
                 prefill = c
                 break
 
-    # ── input form ─────────────────────────────────────────────────────────────
+    # ── input form ────────────────────────────────────────────────────────────
     with st.form("case_form"):
         col1, col2 = st.columns(2)
         with col1:
@@ -268,43 +234,46 @@ if "🔍 Diagnose" in view:
             height=80,
         )
         topology = st.text_input(
-            "Topology",
+            "Topology / Lab Notes",
             value=prefill.get("topology", "PC0 -> Switch0 -> Router0 -> Server0"),
         )
 
-        show_brief = st.text_area(
-            "`show ip interface brief`",
+        show_outputs = st.text_area(
+            "Cisco CLI Evidence (show ip interface brief, show ip route, show vlan brief, etc.)",
             value=prefill.get("show_ip_interface_brief", """\
 Interface              IP-Address      OK? Method Status                Protocol
 GigabitEthernet0/0     192.168.10.1    YES manual up                    up
 GigabitEthernet0/1     192.168.20.1    YES manual administratively down down
-GigabitEthernet0/2     unassigned      YES unset  administratively down down
-Vlan1                  unassigned      YES unset  administratively down down"""),
-            height=160,
+GigabitEthernet0/2     unassigned      YES unset  administratively down down"""),
+            height=180,
+            help="Paste any combination of show commands here — the rule checker will parse all of them.",
         )
 
         show_route = st.text_area(
-            "`show ip route`  (optional)",
+            "`show ip route`  (optional — paste separately for route analysis)",
             value=prefill.get("show_ip_route", ""),
-            height=100,
+            height=80,
         )
 
-        with st.expander("Advanced inputs (ARP, VLAN, host mask)"):
-            show_arp    = st.text_area("`show ip arp`",        value=prefill.get("show_ip_arp", ""),    height=80)
-            show_vlan   = st.text_area("`show vlan brief`",    value=prefill.get("show_vlan_brief", ""), height=80)
-            req_vlan    = st.text_input("Required VLAN ID",    value=prefill.get("required_vlan", ""))
-            port        = st.text_input("Access port",         value=prefill.get("port", ""))
-            host_ip     = st.text_input("Host IP",             value=prefill.get("host_ip", ""))
-            host_mask   = st.text_input("Host mask",           value=prefill.get("host_mask", ""))
-            client_gw   = st.text_input("Client gateway",      value=prefill.get("client_gateway", ""))
+        with st.expander("Advanced inputs (ARP, VLAN, host details)"):
+            show_arp  = st.text_area("`show ip arp`",      value=prefill.get("show_ip_arp", ""),    height=70)
+            show_vlan = st.text_area("`show vlan brief`",  value=prefill.get("show_vlan_brief", ""), height=70)
+            req_vlan  = st.text_input("Required VLAN ID",  value=prefill.get("required_vlan", ""))
+            port      = st.text_input("Access port",       value=prefill.get("port", ""))
+            host_ip   = st.text_input("Host IP",           value=prefill.get("host_ip", ""))
+            host_mask = st.text_input("Host mask",         value=prefill.get("host_mask", ""))
+            client_gw = st.text_input("Client gateway",   value=prefill.get("client_gateway", ""))
 
-        run_rule   = st.form_submit_button("▶ Run Rule Checker", type="primary")
-        run_ai     = st.form_submit_button("🤖 Run AI Diagnosis (requires API Key)")
+        col_btn1, col_btn2 = st.columns(2)
+        with col_btn1:
+            run_rule = st.form_submit_button("▶ Run Rule Checker", type="primary", use_container_width=True)
+        with col_btn2:
+            run_ai = st.form_submit_button("🤖 Run AI Diagnosis", use_container_width=True)
 
     # ── rule checker ──────────────────────────────────────────────────────────
     if run_rule or run_ai:
         rule_result = check_rules(
-            show_brief, affected_network,
+            show_outputs, affected_network,
             show_ip_route=show_route,
             show_ip_arp=show_arp,
             show_vlan_brief=show_vlan,
@@ -314,17 +283,18 @@ Vlan1                  unassigned      YES unset  administratively down down""")
             host_mask=host_mask or None,
             client_gateway=client_gw or None,
         )
-        st.session_state["rule_result"]    = rule_result
+        st.session_state["rule_result"]     = rule_result
         st.session_state["current_case_id"] = case_id
-        st.session_state["ai_result"]       = None  # reset AI result on new run
+        st.session_state["current_symptom"] = symptom
+        st.session_state["ai_result"]       = None
 
     if "rule_result" in st.session_state:
         rule_result = st.session_state["rule_result"]
 
         st.divider()
-        st.subheader("① Rule Checker  — Deterministic")
+        st.subheader("① Rule Checker — Deterministic")
 
-        sev  = rule_result.get("severity", "INFO")
+        sev   = rule_result.get("severity", "INFO")
         rtype = rule_result.get("type", "")
 
         col_a, col_b = st.columns([1, 4])
@@ -333,7 +303,6 @@ Vlan1                  unassigned      YES unset  administratively down down""")
             st.metric("Rule type", rtype)
         with col_b:
             st.info(rule_result.get("message", ""))
-
             all_findings = rule_result.get("all_findings", [])
             if len(all_findings) > 1:
                 with st.expander(f"All findings ({len(all_findings)})"):
@@ -345,99 +314,106 @@ Vlan1                  unassigned      YES unset  administratively down down""")
 
     # ── AI diagnoser ──────────────────────────────────────────────────────────
     if run_ai and "rule_result" in st.session_state:
-        if not api_key:
-            st.error("Please enter a Gemini API Key in the sidebar.")
-        else:
-            case_payload = {
-                "case_id":               st.session_state["current_case_id"],
-                "symptom":               symptom,
-                "topology":              topology,
-                "show_ip_interface_brief": show_brief,
-                "show_ip_route":         show_route,
-                "rule_checker_result":   st.session_state["rule_result"],
-            }
-            with st.spinner("Calling Gemini API…"):
-                ai_result = diagnose_case(case_payload, api_key)
-            st.session_state["ai_result"] = ai_result
-
-    if st.session_state.get("ai_result") is not None:
-        ai_result = st.session_state["ai_result"]
-        rule_result = st.session_state["rule_result"]
-
-        st.divider()
-        st.subheader("② AI Diagnosis  — NetSage AI")
-
-        conf = ai_result.get("confidence", 0)
-        threshold = CONFIG.get("confidence_threshold", 0.5)
-
-        col_x, col_y = st.columns([1, 4])
-        with col_x:
-            st.metric(
-                "Confidence",
-                f"{round(conf * 100)}%",
-                delta="above threshold" if conf >= threshold else "below threshold",
-                delta_color="normal" if conf >= threshold else "inverse",
-            )
-        with col_y:
-            st.progress(conf, text=f"AI confidence: {round(conf*100)}%")
-
-        st.markdown("**Root Cause**")
-        st.warning(ai_result.get("root_cause", ""))
-
-        evidence = ai_result.get("evidence", [])
-        if evidence:
-            st.markdown("**Evidence**")
-            for e in evidence:
-                st.markdown(f"- {e}" if isinstance(e, str) else f"```\n{json.dumps(e, indent=2)}\n```")
-
-        next_cmd = ai_result.get("next_command", "")
-        if next_cmd:
-            st.markdown("**Recommended Next Command**")
-            st.code(next_cmd, language="text")
-
-        fix_steps = ai_result.get("fix_steps", [])
-        if fix_steps:
-            st.markdown("**Recommended Fix**")
-            st.code("\n".join(fix_steps), language="text")
-            st.error("⚠️ Human approval required before applying any fix. NetSage AI does not execute commands automatically.")
-        else:
-            st.markdown("_No automatic fix recommended — gather more evidence first._")
-
-        with st.expander("Raw AI JSON"):
-            st.json(ai_result)
-
-        # ── human review ──────────────────────────────────────────────────────
-        st.divider()
-        st.subheader("③ Human Review")
-
-        with st.form("review_form"):
-            decision = st.radio(
-                "Decision",
-                ["Accepted", "Edited", "Rejected"],
-                horizontal=True,
-            )
-            notes = st.text_area("Reviewer notes (required for Edited / Rejected)", height=80)
-            submitted = st.form_submit_button("Submit Review")
-
-        if submitted:
-            if decision in ("Edited", "Rejected") and not notes.strip():
-                st.error("Please add reviewer notes for Edited / Rejected decisions.")
-            else:
-                append_review(
-                    st.session_state.get("current_case_id", ""),
-                    rule_result,
-                    ai_result,
-                    decision,
-                    notes,
-                )
-                st.success(f"✅ Review logged as **{decision}**.")
+        resolved_key = get_api_key(sidebar_key)
+        case_payload = {
+            "case_id":               st.session_state["current_case_id"],
+            "symptom":               symptom,
+            "topology":              topology,
+            "show_ip_interface_brief": show_outputs,
+            "show_ip_route":         show_route,
+            "rule_checker_result":   st.session_state["rule_result"],
+        }
+        label = "Calling Gemini API…" if resolved_key else "Generating offline diagnosis…"
+        with st.spinner(label):
+            ai_result = diagnose_case(case_payload, resolved_key)
+        st.session_state["ai_result"] = ai_result
 
     elif run_ai and "rule_result" not in st.session_state:
         st.error("Run the rule checker first before requesting an AI diagnosis.")
 
-    elif run_ai and st.session_state.get("ai_result") is None and "rule_result" in st.session_state and api_key:
-        # ai_result was attempted but returned None
-        st.error("AI diagnosis failed. Please check your API key and network connection.")
+    # ── display AI result ─────────────────────────────────────────────────────
+    if st.session_state.get("ai_result") is not None:
+        ai = st.session_state["ai_result"]
+        rule_result = st.session_state["rule_result"]
+
+        st.divider()
+        st.subheader("② AI Diagnosis — NetSage AI")
+
+        is_fallback = ai.get("_fallback") or ai.get("_error")
+        if is_fallback:
+            st.markdown('<span class="fallback-badge">⚡ OFFLINE / DEMO MODE</span>', unsafe_allow_html=True)
+            if ai.get("_error"):
+                st.caption(f"API error: {ai['_error']}")
+
+        conf_str = ai.get("confidence", "Low")
+        osi      = ai.get("osi_layer", 3)
+
+        col_x, col_y, col_z = st.columns(3)
+        col_x.metric("Confidence",  f"{confidence_color(conf_str)} {conf_str}")
+        col_y.metric("OSI Layer",   osi_label(osi))
+        col_z.metric("Rule Match",  rule_result.get("type", "—"))
+
+        st.markdown("**Root Cause**")
+        st.warning(ai.get("root_cause", ""))
+
+        evidence = ai.get("evidence", [])
+        if evidence:
+            st.markdown("**Evidence**")
+            for e in evidence:
+                st.markdown(f"- `{e}`")
+
+        next_cmds = ai.get("next_commands", [])
+        if next_cmds:
+            st.markdown("**Recommended Next Commands**")
+            st.code("\n".join(next_cmds), language="text")
+
+        rem_steps = ai.get("remediation_steps", [])
+        if rem_steps:
+            st.markdown("**Remediation Steps**")
+            st.code("\n".join(rem_steps), language="text")
+            st.error("⚠️ Human approval required before applying any fix. NetSage AI does not execute commands automatically.")
+        else:
+            st.markdown("_No automatic fix recommended — gather more evidence first._")
+
+        verif = ai.get("verification", [])
+        if verif:
+            st.markdown("**Verification Commands**")
+            st.code("\n".join(verif), language="text")
+
+        with st.expander("Raw AI JSON"):
+            st.json(ai)
+
+        # ── human review ──────────────────────────────────────────────────────
+        st.divider()
+        st.subheader("③ Human Review")
+        st.caption("A human must accept, edit, or reject every diagnosis before it is logged.")
+
+        with st.form("review_form"):
+            human_verdict = st.radio(
+                "Verdict",
+                ["Accepted", "Edited", "Rejected"],
+                horizontal=True,
+            )
+            corrected_fault = st.text_input(
+                "Corrected fault description (required if Edited / Rejected)",
+                value="",
+            )
+            reviewer_notes = st.text_area("Reviewer notes", height=80)
+            submitted = st.form_submit_button("✅ Submit Review", type="primary")
+
+        if submitted:
+            if human_verdict in ("Edited", "Rejected") and not corrected_fault.strip():
+                st.error("Please provide a corrected fault description for Edited / Rejected decisions.")
+            else:
+                append_review(
+                    st.session_state.get("current_case_id", ""),
+                    st.session_state.get("current_symptom", ""),
+                    ai,
+                    human_verdict,
+                    corrected_fault,
+                    reviewer_notes,
+                )
+                st.success(f"✅ Review logged as **{human_verdict}**.")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -448,7 +424,7 @@ elif "📊 Dashboard" in view:
 
     st.title("📊 NetSage AI — Dashboard")
 
-    # ── Dataset Overview (from cases.csv) ─────────────────────────────────
+    # ── Dataset Overview ──────────────────────────────────────────────────────
     st.subheader("📁 Dataset Overview")
 
     if os.path.exists(DATA_PATH):
@@ -463,88 +439,115 @@ elif "📊 Dashboard" in view:
             c3.metric("OSI Layers Covered", df_cases["osi_layer"].nunique())
 
         st.divider()
-
         col_l, col_r = st.columns(2)
 
         with col_l:
-            st.markdown("**Issue Type Distribution**")
             if "category" in df_cases.columns:
-                cat_counts = df_cases["category"].value_counts()
-                st.bar_chart(cat_counts)
+                fig = px.bar(
+                    df_cases["category"].value_counts().reset_index(),
+                    x="category", y="count",
+                    title="Issue Type Distribution",
+                    color="category",
+                    color_discrete_sequence=px.colors.sequential.Teal,
+                )
+                fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                                  font_color="#e7f0ed", showlegend=False)
+                st.plotly_chart(fig, use_container_width=True)
 
         with col_r:
-            st.markdown("**Severity Distribution**")
             if "severity" in df_cases.columns:
-                sev_counts = df_cases["severity"].value_counts()
-                st.bar_chart(sev_counts)
-
-        st.divider()
+                fig = px.pie(
+                    df_cases["severity"].value_counts().reset_index(),
+                    names="severity", values="count",
+                    title="Severity Distribution",
+                    color_discrete_map={"HIGH":"#ef4444","MEDIUM":"#f5bd43","LOW":"#71e1c1"},
+                )
+                fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", font_color="#e7f0ed")
+                st.plotly_chart(fig, use_container_width=True)
 
         col_l2, col_r2 = st.columns(2)
-
         with col_l2:
-            st.markdown("**OSI Layer Distribution**")
             if "osi_layer" in df_cases.columns:
-                osi_counts = df_cases["osi_layer"].value_counts()
-                st.bar_chart(osi_counts)
+                fig = px.bar(
+                    df_cases["osi_layer"].value_counts().sort_index().reset_index(),
+                    x="osi_layer", y="count",
+                    title="OSI Layer Distribution",
+                    color_discrete_sequence=["#71e1c1"],
+                )
+                fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                                  font_color="#e7f0ed", showlegend=False)
+                st.plotly_chart(fig, use_container_width=True)
 
         with col_r2:
-            st.markdown("**Concept Tag Distribution**")
             if "concept_tag" in df_cases.columns:
-                tag_counts = df_cases["concept_tag"].value_counts()
-                st.bar_chart(tag_counts)
+                fig = px.bar(
+                    df_cases["concept_tag"].value_counts().reset_index(),
+                    x="concept_tag", y="count",
+                    title="Concept Tag Distribution",
+                    color_discrete_sequence=["#f5bd43"],
+                )
+                fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                                  font_color="#e7f0ed", showlegend=False)
+                st.plotly_chart(fig, use_container_width=True)
 
         with st.expander("Full case dataset"):
-            st.dataframe(df_cases, width=None)
+            st.dataframe(df_cases, use_container_width=True)
     else:
         st.info("No cases.csv found at data/cases.csv")
 
-    # ── Human Review Analytics (from review_log.csv) ──────────────────────
+    # ── Human Review Analytics ────────────────────────────────────────────────
     st.divider()
     st.subheader("🤝 AI vs Human Agreement")
 
-    if not os.path.exists(REVIEW_LOG_PATH):
-        st.info("No review_log.csv found yet. Run some diagnoses and submit reviews to populate this section.")
+    df_rev = load_reviews()
+    if df_rev.empty:
+        st.info("No reviews logged yet. Run diagnoses and submit reviews to populate this section.")
     else:
-        df = pd.read_csv(REVIEW_LOG_PATH)
+        total    = len(df_rev)
+        accepted = (df_rev["human_verdict"] == "Accepted").sum()
+        edited   = (df_rev["human_verdict"] == "Edited").sum()
+        rejected = (df_rev["human_verdict"] == "Rejected").sum()
+        agree_pct = round(accepted / total * 100, 1) if total else 0
 
-        if df.empty:
-            st.info("review_log.csv is empty.")
-        else:
-            total   = len(df)
-            accepted = (df["decision"] == "Accepted").sum()
-            edited   = (df["decision"] == "Edited").sum()
-            rejected = (df["decision"] == "Rejected").sum()
-            agreement = round(accepted / total * 100, 1) if total else 0
+        col1, col2, col3, col4, col5 = st.columns(5)
+        col1.metric("Total Reviewed", total)
+        col2.metric("✅ Accepted",    accepted)
+        col3.metric("✏️ Edited",      edited)
+        col4.metric("❌ Rejected",    rejected)
+        col5.metric("Agreement Rate", f"{agree_pct}%")
 
-            col1, col2, col3, col4, col5 = st.columns(5)
-            col1.metric("Total reviewed", total)
-            col2.metric("✅ Accepted",  accepted)
-            col3.metric("✏️ Edited",    edited)
-            col4.metric("❌ Rejected",  rejected)
-            col5.metric("Agreement rate", f"{agreement}%")
+        st.divider()
+        col_rl, col_rr = st.columns(2)
 
-            st.divider()
+        with col_rl:
+            verdict_counts = df_rev["human_verdict"].value_counts().reset_index()
+            fig = px.bar(verdict_counts, x="human_verdict", y="count",
+                         title="Decision Breakdown",
+                         color="human_verdict",
+                         color_discrete_map={"Accepted":"#71e1c1","Edited":"#f5bd43","Rejected":"#ef4444"})
+            fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                               font_color="#e7f0ed", showlegend=False)
+            st.plotly_chart(fig, use_container_width=True)
 
-            col_rl, col_rr = st.columns(2)
+        with col_rr:
+            if "ai_confidence" in df_rev.columns:
+                conf_counts = df_rev["ai_confidence"].value_counts().reset_index()
+                fig = px.pie(conf_counts, names="ai_confidence", values="count",
+                             title="AI Confidence Distribution",
+                             color_discrete_map={"High":"#71e1c1","Medium":"#f5bd43","Low":"#ef4444"})
+                fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", font_color="#e7f0ed")
+                st.plotly_chart(fig, use_container_width=True)
 
-            with col_rl:
-                st.markdown("**Decision Breakdown**")
-                decision_counts = df["decision"].value_counts()
-                st.bar_chart(decision_counts)
+        st.divider()
+        corrections = df_rev[df_rev["human_verdict"].isin(["Edited", "Rejected"])]
+        if not corrections.empty:
+            st.subheader("Human Corrections")
+            st.dataframe(corrections[["case_id", "ai_fault", "human_verdict", "corrected_fault", "reviewer_notes"]],
+                         use_container_width=True)
 
-            with col_rr:
-                if "corrected_root_cause" in df.columns:
-                    st.markdown("**Correction Rate by Category**")
-                    corrections = df[df["decision"].isin(["Edited", "Rejected"])]
-                    if not corrections.empty and "case_id" in corrections.columns:
-                        st.dataframe(corrections[["case_id", "decision", "reviewer_notes"]], width=None)
-                    else:
-                        st.info("No corrections logged yet.")
-
-            st.divider()
-            st.subheader("Full review log")
-            st.dataframe(df, width=None)
+        st.divider()
+        st.subheader("Full Review Log")
+        st.dataframe(df_rev, use_container_width=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -554,6 +557,7 @@ elif "📊 Dashboard" in view:
 elif "📋 Audit Log" in view:
 
     st.title("📋 Responsible AI Audit Log")
+    st.caption("Cases where the AI diagnosis was corrected or rejected by a human reviewer.")
 
     if not os.path.exists(AUDIT_LOG_PATH):
         st.warning(f"Audit log not found at `{AUDIT_LOG_PATH}`.")
