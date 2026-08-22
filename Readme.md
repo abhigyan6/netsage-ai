@@ -69,9 +69,6 @@ python src/checker.py
 ### 3. Full Streamlit dashboard
 
 ```bash
-# Pull the Ollama model first (one-time, requires Ollama installed)
-ollama pull qwen2.5:1.5b
-
 # Launch the app
 streamlit run src/app.py
 ```
