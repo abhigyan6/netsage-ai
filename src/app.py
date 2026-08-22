@@ -235,17 +235,13 @@ if "🔍 Diagnose" in view:
         )
         topology = st.text_input(
             "Topology / Lab Notes",
-            value=prefill.get("topology", "PC0 -> Switch0 -> Router0 -> Server0"),
+            value=prefill.get("topology_note", "PC0 -> Switch0 -> Router0 -> Server0"),
         )
 
         show_outputs = st.text_area(
             "Cisco CLI Evidence (show ip interface brief, show ip route, show vlan brief, etc.)",
-            value=prefill.get("show_ip_interface_brief", """\
-Interface              IP-Address      OK? Method Status                Protocol
-GigabitEthernet0/0     192.168.10.1    YES manual up                    up
-GigabitEthernet0/1     192.168.20.1    YES manual administratively down down
-GigabitEthernet0/2     unassigned      YES unset  administratively down down"""),
-            height=180,
+            value=prefill.get("show_outputs", "Interface              IP-Address      OK? Method Status                Protocol\nGigabitEthernet0/0     192.168.10.1    YES manual up                    up\nGigabitEthernet0/1     192.168.20.1    YES manual administratively down down"),
+            height=200,
             help="Paste any combination of show commands here — the rule checker will parse all of them.",
         )
 
@@ -433,8 +429,10 @@ elif "📊 Dashboard" in view:
 
         c1, c2, c3 = st.columns(3)
         c1.metric("Total Cases", total_cases)
-        if "category" in df_cases.columns:
-            c2.metric("Fault Categories", df_cases["category"].nunique())
+        # New schema uses concept_tag instead of category
+        tag_col = "concept_tag" if "concept_tag" in df_cases.columns else "category"
+        if tag_col in df_cases.columns:
+            c2.metric("Fault Types", df_cases[tag_col].nunique())
         if "osi_layer" in df_cases.columns:
             c3.metric("OSI Layers Covered", df_cases["osi_layer"].nunique())
 
@@ -442,12 +440,13 @@ elif "📊 Dashboard" in view:
         col_l, col_r = st.columns(2)
 
         with col_l:
-            if "category" in df_cases.columns:
+            tag_col = "concept_tag" if "concept_tag" in df_cases.columns else "category"
+            if tag_col in df_cases.columns:
                 fig = px.bar(
-                    df_cases["category"].value_counts().reset_index(),
-                    x="category", y="count",
-                    title="Issue Type Distribution",
-                    color="category",
+                    df_cases[tag_col].value_counts().reset_index(),
+                    x=tag_col, y="count",
+                    title="Fault Type Distribution",
+                    color=tag_col,
                     color_discrete_sequence=px.colors.sequential.Teal,
                 )
                 fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
