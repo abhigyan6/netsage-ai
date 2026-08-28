@@ -13,7 +13,7 @@ human reviewer always has the final say — nothing is auto-applied.
 
 ---
 
-## Project layout
+## Project layout.
 
 ```
 netsage-ai/
