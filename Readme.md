@@ -10,7 +10,7 @@ human reviewer always has the final say — nothing is auto-applied.
 
 > Safety rule: **the AI never executes a fix.** Every diagnosis is logged
 > as Accepted, Edited, or Rejected by a human before it's considered final.
-
+yes
 ---
 
 ## Project layout.
