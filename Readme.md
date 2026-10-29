@@ -1,4 +1,6 @@
-# NetSage AI https://netsage-ai-app.streamlit.app/
+# NetSage AI
+
+[Open the Streamlit dashboard](https://netsage-ai-app.streamlit.app/)
 
 **An AI troubleshooting helper for Cisco-style lab networks — with mandatory human review.**
 
@@ -10,11 +12,10 @@ human reviewer always has the final say — nothing is auto-applied.
 
 > Safety rule: **the AI never executes a fix.** Every diagnosis is logged
 > as Accepted, Edited, or Rejected by a human before it's considered final.
-yes
-testcase
+
 ---
 
-## Project layout.
+## Project layout
 
 ```
 netsage-ai/
